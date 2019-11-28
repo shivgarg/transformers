@@ -1,0 +1,19 @@
+universe = vanilla
+Initialdir = /scratch/cluster/shivgarg/nlp_project/transformers/examples
+Executable = /lusr/bin/bash
+Arguments = ./run.sh
++Group   = "GRAD"
++Project = "INSTRUCTIONAL"
++ProjectDescription = "Course project for CS388 NLP"
+Requirements = TARGET.GPUSlot
+getenv = True
+request_GPUs = 1
++GPUJob = true
+Log = gpt2.log
+Error = gpt2.err
+Output = gpt2.out
+Notification = complete
+Notify_user =  shivamgarg@utexas.edu
+Queue 1
+
+
