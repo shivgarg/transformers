@@ -505,7 +505,7 @@ class OpenAIGPTLMHeadModel(OpenAIGPTPreTrainedModel):
         return self.lm_head
 
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, inputs_embeds=None,
-                labels=None):
+                labels=None, ignore_idx = -1):
         transformer_outputs = self.transformer(input_ids,
                                                attention_mask=attention_mask,
                                                token_type_ids=token_type_ids,
@@ -521,7 +521,7 @@ class OpenAIGPTLMHeadModel(OpenAIGPTPreTrainedModel):
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            loss_fct = CrossEntropyLoss(ignore_index=-1)
+            loss_fct = CrossEntropyLoss(ignore_index=ignore_idx)
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
                             shift_labels.view(-1))
             outputs = (loss,) + outputs

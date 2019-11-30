@@ -78,11 +78,10 @@ class TextDataset(Dataset):
             self.examples = []
             with open(file_path, encoding="utf-8") as f:
                 for text in f.readlines():
-
-                    tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
-                    len_tokens = len(tokenized_text)
-                    tokenized_text += [-1]*(block_size-len_tokens)
-                    self.examples.append(tokenized_text)
+                    text = text.strip()
+                    padded_sequence = ' '.join(['<pad>']*(block_size - len(text.split())))
+                    tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text+padded_sequence))
+                    self.examples.append(tokenized_text[:block_size])
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text))
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
             # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
@@ -98,7 +97,6 @@ class TextDataset(Dataset):
 
     def __getitem__(self, item):
         return torch.tensor(self.examples[item])
-
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     dataset = TextDataset(tokenizer, args, file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
@@ -196,14 +194,14 @@ def train(args, train_dataset, model, tokenizer):
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    #if args.n_gpu > 1:
+    #    model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
-    if args.local_rank != -1:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                          output_device=args.local_rank,
-                                                          find_unused_parameters=True)
+    #if args.local_rank != -1:
+    #    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+    #                                                      output_device=args.local_rank,
+    #`                                                      find_unused_parameters=True)
 
     # Train!
     logger.info("***** Running training *****")
@@ -228,9 +226,8 @@ def train(args, train_dataset, model, tokenizer):
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            outputs = model(inputs, masked_lm_labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>')) if args.mlm else model(inputs, labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>'))
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
-
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -321,7 +318,7 @@ def evaluate(args, model, tokenizer, prefix=""):
         labels = labels.to(args.device)
 
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            outputs = model(inputs, masked_lm_labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>')) if args.mlm else model(inputs, labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>'))
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
@@ -483,6 +480,8 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)
+    tokenizer.add_special_tokens({'pad_token': '<pad>', 'eos_token': '_END_'})    
+
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
     args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)

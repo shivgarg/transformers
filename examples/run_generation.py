@@ -21,7 +21,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import argparse
 import logging
 from tqdm import trange
-
+import json
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -175,6 +175,10 @@ def main():
                         help="random seed for initialization")
     parser.add_argument('--stop_token', type=str, default=None,
                         help="Token at which text generation is stopped")
+    parser.add_argument('--ques_file', type=str, default=None,
+			help="CQA questions file in json format")
+    parser.add_argument('--output_file', type=str, default=None,
+			help="Name of file where to write cose explanantions")
     args = parser.parse_args()
 
     args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -220,16 +224,23 @@ def main():
             xlm_mask_token = tokenizer.mask_token_id
         else:
             xlm_mask_token = None
-
-        raw_text = args.prompt if args.prompt else input("Model prompt >>> ")
-        if args.model_type in ["transfo-xl", "xlnet"]:
+	
+        questions = open(args.ques_file).readlines()
+        for raw_text in questions:
+          ques = json.loads(raw_text)
+          text = ques['question']['stem']
+          for answer in ques['question']['choices'][:4]:
+            text += ', '+answer['text']
+          text+=' or {}? commonsense says '.format(ques['question']['choices'][4]['text'])
+          print(text)
+          if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
-            raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
-        context_tokens = tokenizer.encode(raw_text, add_special_tokens=False)
-        if args.model_type == "ctrl":
+            text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
+          context_tokens = tokenizer.encode(raw_text, add_special_tokens=False)
+          if args.model_type == "ctrl":
             if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
-                logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
-        out = sample_sequence(
+              logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
+          out = sample_sequence(
             model=model,
             context=context_tokens,
             num_samples=args.num_samples,
@@ -243,15 +254,15 @@ def main():
             xlm_mask_token=xlm_mask_token,
             xlm_lang=xlm_lang,
             device=args.device,
-        )
-        out = out[:, len(context_tokens):].tolist()
-        for o in out:
+          )
+          out = out[:, len(context_tokens):].tolist()
+          for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
 
             print(text)
 
-        if args.prompt:
+          if args.prompt:
             break
     return text
 
