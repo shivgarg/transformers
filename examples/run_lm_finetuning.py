@@ -29,7 +29,7 @@ import pickle
 import random
 import re
 import shutil
-
+import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
@@ -61,6 +61,12 @@ MODEL_CLASSES = {
     'distilbert': (DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer)
 }
 
+def tokenize_sentence(text, tokenizer):
+  return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
+
+def convert_to_ids(tokens,tokenizer):
+  return tokenizer.convert_tokens_to_ids(tokens)
+
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path='train', block_size=512):
@@ -71,17 +77,44 @@ class TextDataset(Dataset):
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
-                self.examples = pickle.load(handle)
+                (self.inp, self.seg, self.labels) = pickle.load(handle)
         else:
             logger.info("Creating features from dataset file at %s", directory)
 
-            self.examples = []
+            self.inp = []
+            self.seg = []
+            self.labels = []
             with open(file_path, encoding="utf-8") as f:
                 for text in f.readlines():
-                    text = text.strip()
-                    padded_sequence = ' '.join(['<pad>']*(block_size - len(text.split())))
-                    tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text+padded_sequence))
-                    self.examples.append(tokenized_text[:block_size])
+                    labels = []
+                    example = json.loads(text)
+                    ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+                    ques_seg = ['<ques>']*len(ques)
+                    labels.extend([-1]*len(ques))
+                    answers = convert_to_ids(['<ans>'],tokenizer)
+                    for ans in example['question']['choices']:
+                      answers.extend(tokenize_sentence(ans['text'], tokenizer))
+                    answers_seg = ['<ans>']*len(answers)
+                    labels.extend([-1]*(len(answers)))
+                    exp_token = convert_to_ids(['<exp>'],tokenizer) 
+                    exp = tokenize_sentence(example['question']['cose'] + ' <eos>',tokenizer)
+                    exp_seg = ['<exp>']*(len(exp)+len(exp_token))
+                    labels.extend([-1]*len(exp_token))
+                    labels.extend(exp)         
+                    inp = ques + answers + exp_token + exp
+                    segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
+                    assert len(inp) == len(labels)
+                    assert len(labels) == len(segment)
+                    required = block_size - len(inp)
+                    inp += convert_to_ids(['<pad>']*required, tokenizer)
+                    segment += convert_to_ids(['<pad>']*required, tokenizer)
+                    labels += [-1]*required                
+                    assert len(inp) == len(labels)
+                    assert len(labels) == len(segment)
+                    
+                    self.inp.append(inp[:block_size])
+                    self.seg.append(segment[:block_size])
+                    self.labels.append(labels[:block_size])
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text))
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
             # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
@@ -90,13 +123,13 @@ class TextDataset(Dataset):
 
             logger.info("Saving features into cached file %s", cached_features_file)
             with open(cached_features_file, 'wb') as handle:
-                pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump((self.inp, self.seg, self.labels), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
-        return len(self.examples)
+        return len(self.inp)
 
     def __getitem__(self, item):
-        return torch.tensor(self.examples[item])
+        return (torch.tensor(self.inp[item]), torch.tensor(self.seg[item]), torch.tensor(self.labels[item]))
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     dataset = TextDataset(tokenizer, args, file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
@@ -221,12 +254,13 @@ def train(args, train_dataset, model, tokenizer):
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
-            inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+        for step, (inp,segment,labels) in enumerate(epoch_iterator):
+            inputs, labels = mask_tokens(inp, tokenizer, args) if args.mlm else (inp, labels)
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
+            segment = segment.to(args.device)
             model.train()
-            outputs = model(inputs, masked_lm_labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>')) if args.mlm else model(inputs, labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>'))
+            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids = inputs, token_type_ids = segment, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -312,13 +346,14 @@ def evaluate(args, model, tokenizer, prefix=""):
     nb_eval_steps = 0
     model.eval()
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+    for (inp,segment,labels) in tqdm(eval_dataloader, desc="Evaluating"):
+        inputs, labels = mask_tokens(inp, tokenizer, args) if args.mlm else (inp, labels)
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
+        segment = segment.to(args.device)
 
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>')) if args.mlm else model(inputs, labels=labels, ignore_idx=tokenizer.convert_tokens_to_ids('<pad>'))
+            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids=inputs, labels=labels, token_type_ids = segment)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
@@ -338,6 +373,15 @@ def evaluate(args, model, tokenizer, prefix=""):
             writer.write("%s = %s\n" % (key, str(result[key])))
 
     return result
+
+
+
+def add_special_tokens(model, tokenizer, tokens):
+	num_tokens = len(tokenizer.encoder)
+	added_tokens = tokenizer.add_special_tokens(tokens)
+	if added_tokens > 0:
+		model.resize_token_embeddings(new_num_tokens=num_tokens + added_tokens)
+
 
 
 def main():
@@ -390,7 +434,7 @@ def main():
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--learning_rate", default=5e-5, type=float,
                         help="The initial learning rate for Adam.")
-    parser.add_argument("--weight_decay", default=0.0, type=float,
+    parser.add_argument("--weight_decay", default=1e-3, type=float,
                         help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer.")
@@ -480,8 +524,8 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)
-    tokenizer.add_special_tokens({'pad_token': '<pad>', 'eos_token': '_END_'})    
-
+    special_tokens = {'bos_token':'<bos>','eos_token':'<eos>', 'pad_token': '<pad>', 
+                      'additional_special_tokens':('<ques>','<ans>','<exp>') }
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
     args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
@@ -490,7 +534,8 @@ def main():
                                         config=config,
                                         cache_dir=args.cache_dir if args.cache_dir else None)
     model.to(args.device)
-
+    add_special_tokens(model, tokenizer, special_tokens)
+ 
     if args.local_rank == 0:
         torch.distributed.barrier()  # End of barrier to make sure only the first process in distributed training download model & vocab
 
