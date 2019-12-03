@@ -107,15 +107,25 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
     return logits
 
 
+def tokenize_sentence(text, tokenizer):
+  return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
+
+def convert_to_ids(tokens, tokenizer):
+  return tokenizer.convert_tokens_to_ids(tokens)
+
 def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=0, top_p=0.0, repetition_penalty=1.0,
-                    is_xlnet=False, is_xlm_mlm=False, xlm_mask_token=None, xlm_lang=None, device='cpu'):
+                    is_xlnet=False, is_xlm_mlm=False, xlm_mask_token=None, xlm_lang=None, device='cpu', tokenizer=None):
+    (context, segment) = context
     context = torch.tensor(context, dtype=torch.long, device=device)
     context = context.unsqueeze(0).repeat(num_samples, 1)
     generated = context
+    segment = torch.tensor(segment, dtype=torch.long, device=device)
+    segment = segment.unsqueeze(0).repeat(num_samples, 1)
+ 
     with torch.no_grad():
         for _ in trange(length):
 
-            inputs = {'input_ids': generated}
+            inputs = {'input_ids': generated, 'token_type_ids':segment}
             if is_xlnet: 
                 # XLNet is a direct (predict same token, not next token) and bi-directional model by default
                 # => need one additional dummy token in the input (will be masked), attention mask and target mapping (see model docstring)
@@ -149,6 +159,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
             else:
                 next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
             generated = torch.cat((generated, next_token), dim=1)
+            segment = torch.cat((segment, torch.tensor(convert_to_ids(['<exp>'], tokenizer), dtype=torch.long, device=device).unsqueeze(-1)), dim=1)
     return generated
 
 
@@ -227,16 +238,22 @@ def main():
 	
         questions = open(args.ques_file).readlines()
         for raw_text in questions:
-          ques = json.loads(raw_text)
-          text = ques['question']['stem']
-          for answer in ques['question']['choices'][:4]:
-            text += ', '+answer['text']
-          text+=' or {}? commonsense says '.format(ques['question']['choices'][4]['text'])
-          print(text)
+          example = json.loads(raw_text)
+          ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+          ques_seg = ['<ques>']*len(ques)
+          answers = convert_to_ids(['<ans>'],tokenizer)
+          for ans in example['question']['choices']:
+            answers.extend(tokenize_sentence(ans['text'], tokenizer))
+          answers_seg = ['<ans>']*len(answers)
+          exp_token = convert_to_ids(['<exp>'],tokenizer)
+          exp_seg = ['<exp>']*(len(exp_token))
+          inp = ques + answers + exp_token
+          segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
+          assert len(inp) == len(segment)
           if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
             text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
-          context_tokens = tokenizer.encode(raw_text, add_special_tokens=False)
+          context_tokens = (inp, segment)
           if args.model_type == "ctrl":
             if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
               logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
@@ -254,8 +271,9 @@ def main():
             xlm_mask_token=xlm_mask_token,
             xlm_lang=xlm_lang,
             device=args.device,
+            tokenizer=tokenizer,
           )
-          out = out[:, len(context_tokens):].tolist()
+          out = out[:, :].tolist()
           for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]

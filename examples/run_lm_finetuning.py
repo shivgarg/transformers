@@ -55,6 +55,9 @@ logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
     'gpt2': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
+    'gpt2-large': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
+    'gpt2-medium': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
+    'gpt2-xl': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
     'openai-gpt': (OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
     'bert': (BertConfig, BertForMaskedLM, BertTokenizer),
     'roberta': (RobertaConfig, RobertaForMaskedLM, RobertaTokenizer),
@@ -88,15 +91,16 @@ class TextDataset(Dataset):
                 for text in f.readlines():
                     labels = []
                     example = json.loads(text)
-                    ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+                    ques = tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
                     ques_seg = ['<ques>']*len(ques)
                     labels.extend([-1]*len(ques))
-                    answers = convert_to_ids(['<ans>'],tokenizer)
+                    answers = "answers: "
                     for ans in example['question']['choices']:
-                      answers.extend(tokenize_sentence(ans['text'], tokenizer))
+                      answers+= ans['text'] + " , "
+                    answers = tokenize_sentence(answers, tokenizer)
                     answers_seg = ['<ans>']*len(answers)
                     labels.extend([-1]*(len(answers)))
-                    exp_token = convert_to_ids(['<exp>'],tokenizer) 
+                    exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
                     exp = tokenize_sentence(example['question']['cose'] + ' <eos>',tokenizer)
                     exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                     labels.extend([-1]*len(exp_token))
@@ -434,7 +438,7 @@ def main():
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--learning_rate", default=5e-5, type=float,
                         help="The initial learning rate for Adam.")
-    parser.add_argument("--weight_decay", default=1e-3, type=float,
+    parser.add_argument("--weight_decay", default=1e-1, type=float,
                         help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer.")
