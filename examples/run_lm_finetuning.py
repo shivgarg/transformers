@@ -78,61 +78,51 @@ class TextDataset(Dataset):
         assert os.path.isfile(file_path)
         self.inp = []
         self.seg = []
-        self.labels = []
-        self.mc_last = []
-        self.ques = []
-        self.block_size = block_size
-        self.tokenizer = tokenizer
-        self.num_adv = num_adv
-        self.explanations = []
+        self.lm_labels = []
+        self.mc_token_ids = []
+        self.mc_labels = []
         directory, filename = os.path.split(file_path)
         cached_features_file = os.path.join(directory, args.model_name_or_path + '_cached_lm_' + str(block_size) + '_' + filename)
 
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
-                (self.inp, self.seg, self.labels, self.ques, self.mc_last, self.explanations) = pickle.load(handle)
+                (self.inp, self.seg, self.labels, self.mc_token_ids, self.mc_labels) = pickle.load(handle)
         else:
             logger.info("Creating features from dataset file at %s", directory)
 
             with open(file_path, encoding="utf-8") as f:
-              for text in f.readlines():
-                example = json.loads(text)
-                self.explanations.append(example['question']['cose'])
-
-            with open(file_path, encoding="utf-8") as f:
                 for text in f.readlines():
-                    labels = []
+                    questions = []
+                    segment = []
+                    lm_labels_list = []
+                    mc_token_ids = []
                     example = json.loads(text)
                     ques = tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
                     ques_seg = ['<ques>']*len(ques)
-                    labels.extend([-1]*len(ques))
-                    answers = "answers: "
-                    for ans in example['question']['choices']:
-                      answers+= ans['text'] + " , "
-                    answers = tokenize_sentence(answers, tokenizer)
-                    answers_seg = ['<ans>']*len(answers)
-                    labels.extend([-1]*(len(answers)))
-                    exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
-                    exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
-                    exp_seg = ['<exp>']*(len(exp)+len(exp_token))
-                    labels.extend([-1]*len(exp_token))
-                    labels.extend(exp)         
-                    inp = ques + answers + exp_token + exp
-                    self.ques.append(ques+answers+exp_token)
-                    segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
-                    assert len(inp) == len(labels)
-                    assert len(labels) == len(segment)
-                    required = block_size - len(inp)
-                    self.mc_last.append(len(inp)-1)
-                    inp += convert_to_ids(['<pad>']*required, tokenizer)
-                    segment += convert_to_ids(['<exp>']*required, tokenizer)
-                    labels += [-1]*required                
-                    assert len(inp) == len(labels)
-                    assert len(labels) == len(segment)
-                    self.inp.append(inp[:block_size])
-                    self.seg.append(segment[:block_size])
-                    self.labels.append(labels[:block_size])
+                    lm_labels.extend([-1]*len(ques))
+                    for idx,ans in enumerate(example['question']['choices']):
+                      answers= "answer: {} .".format(ans['text'])
+                      answers = tokenize_sentence(answers, tokenizer)
+                      answers_seg = ['<ans>']*len(answers)
+                      labels = lm_labels + [-1]*(len(answers))
+                      exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
+                      exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
+                      exp_seg = ['<exp>']*(len(exp)+len(exp_token))
+                      labels.extend([-1]*len(exp_token))
+                      labels.extend(exp[:-1]+[-1])         
+                      inp = ques + answers + exp_token + exp
+                      segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
+                      assert len(inp) == len(labels)
+                      assert len(labels) == len(segment)
+                      required = block_size - len(inp)
+                      mc_token_ids.append(len(inp)-1)
+                      inp += convert_to_ids(['<pad>']*required, tokenizer)
+                      segment += convert_to_ids(['<exp>']*required, tokenizer)
+                      labels += [-1]*required                
+                      questions.append(inp[:block_size])
+                      segment.append(segment[:block_size])
+                      labels.append(labels[:block_size])
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text))
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
             # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
