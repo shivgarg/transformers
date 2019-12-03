@@ -44,7 +44,7 @@ from tqdm import tqdm, trange
 
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
                                   BertConfig, BertForMaskedLM, BertTokenizer,
-                                  GPT2Config, GPT2LMHeadModel, GPT2Tokenizer,
+                                  GPT2Config, GPT2LMHeadModel, GPT2Tokenizer, GPT2DoubleHeadsModel,
                                   OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, OpenAIGPTDoubleHeadsModel, 
                                   RobertaConfig, RobertaForMaskedLM, RobertaTokenizer,
                                   DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer)
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 MODEL_CLASSES = {
-    'gpt2': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
+    'gpt2': (GPT2Config, GPT2DoubleHeadsModel, GPT2Tokenizer),
     'gpt2-large': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
     'gpt2-medium': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
     'gpt2-xl': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),

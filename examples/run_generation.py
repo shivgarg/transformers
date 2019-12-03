@@ -239,13 +239,14 @@ def main():
         questions = open(args.ques_file).readlines()
         for raw_text in questions:
           example = json.loads(raw_text)
-          ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+          ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          answers = convert_to_ids(['<ans>'],tokenizer)
+          answers = "answers: "
           for ans in example['question']['choices']:
-            answers.extend(tokenize_sentence(ans['text'], tokenizer))
+            answers += ans['text'] +" , "
+          answers = tokenize_sentence(answers, tokenizer)
           answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['<exp>'],tokenizer)
+          exp_token = convert_to_ids(['. commonsense says '],tokenizer)
           exp_seg = ['<exp>']*(len(exp_token))
           inp = ques + answers + exp_token
           segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
