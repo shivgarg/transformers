@@ -45,7 +45,7 @@ from tqdm import tqdm, trange
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
                                   BertConfig, BertForMaskedLM, BertTokenizer,
                                   GPT2Config, GPT2LMHeadModel, GPT2Tokenizer,
-                                  OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer,
+                                  OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, OpenAIGPTDoubleHeadsModel, 
                                   RobertaConfig, RobertaForMaskedLM, RobertaTokenizer,
                                   DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer)
 
@@ -58,10 +58,12 @@ MODEL_CLASSES = {
     'gpt2-large': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
     'gpt2-medium': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
     'gpt2-xl': (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
-    'openai-gpt': (OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
+    #'openai-gpt': (OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
     'bert': (BertConfig, BertForMaskedLM, BertTokenizer),
     'roberta': (RobertaConfig, RobertaForMaskedLM, RobertaTokenizer),
-    'distilbert': (DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer)
+    'distilbert': (DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer),
+    'openai-gpt': (OpenAIGPTConfig, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer),
+ 
 }
 
 def tokenize_sentence(text, tokenizer):
@@ -72,21 +74,32 @@ def convert_to_ids(tokens,tokenizer):
 
 
 class TextDataset(Dataset):
-    def __init__(self, tokenizer, args, file_path='train', block_size=512):
+    def __init__(self, tokenizer, args, file_path='train', block_size=512, num_adv=4):
         assert os.path.isfile(file_path)
+        self.inp = []
+        self.seg = []
+        self.labels = []
+        self.mc_last = []
+        self.ques = []
+        self.block_size = block_size
+        self.tokenizer = tokenizer
+        self.num_adv = num_adv
+        self.explanations = []
         directory, filename = os.path.split(file_path)
         cached_features_file = os.path.join(directory, args.model_name_or_path + '_cached_lm_' + str(block_size) + '_' + filename)
 
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
-                (self.inp, self.seg, self.labels) = pickle.load(handle)
+                (self.inp, self.seg, self.labels, self.ques, self.mc_last, self.explanations) = pickle.load(handle)
         else:
             logger.info("Creating features from dataset file at %s", directory)
 
-            self.inp = []
-            self.seg = []
-            self.labels = []
+            with open(file_path, encoding="utf-8") as f:
+              for text in f.readlines():
+                example = json.loads(text)
+                self.explanations.append(example['question']['cose'])
+
             with open(file_path, encoding="utf-8") as f:
                 for text in f.readlines():
                     labels = []
@@ -101,21 +114,22 @@ class TextDataset(Dataset):
                     answers_seg = ['<ans>']*len(answers)
                     labels.extend([-1]*(len(answers)))
                     exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
-                    exp = tokenize_sentence(example['question']['cose'] + ' <eos>',tokenizer)
+                    exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
                     exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                     labels.extend([-1]*len(exp_token))
                     labels.extend(exp)         
                     inp = ques + answers + exp_token + exp
+                    self.ques.append(ques+answers+exp_token)
                     segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
                     assert len(inp) == len(labels)
                     assert len(labels) == len(segment)
                     required = block_size - len(inp)
+                    self.mc_last.append(len(inp)-1)
                     inp += convert_to_ids(['<pad>']*required, tokenizer)
-                    segment += convert_to_ids(['<pad>']*required, tokenizer)
+                    segment += convert_to_ids(['<exp>']*required, tokenizer)
                     labels += [-1]*required                
                     assert len(inp) == len(labels)
                     assert len(labels) == len(segment)
-                    
                     self.inp.append(inp[:block_size])
                     self.seg.append(segment[:block_size])
                     self.labels.append(labels[:block_size])
@@ -127,13 +141,35 @@ class TextDataset(Dataset):
 
             logger.info("Saving features into cached file %s", cached_features_file)
             with open(cached_features_file, 'wb') as handle:
-                pickle.dump((self.inp, self.seg, self.labels), handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump((self.inp, self.seg, self.labels, self.ques, self.mc_last, self.explanations), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return len(self.inp)
 
     def __getitem__(self, item):
-        return (torch.tensor(self.inp[item]), torch.tensor(self.seg[item]), torch.tensor(self.labels[item]))
+        inputs = []
+        segments = []
+        lm_labels = []
+        mc_last_ids = []
+        mc_labels = []
+        adv_cose = np.random.choice(list(range(item))+list(range(item+1,len(self.inp))),self.num_adv)
+        inputs.append(self.inp[item])
+        segments.append(self.seg[item])
+        lm_labels.append(self.labels[item])
+        mc_last_ids.append(self.mc_last[item])
+        mc_labels.append(0)
+        for i in range(self.num_adv):
+                exp = tokenize_sentence(self.explanations[adv_cose[i]] + ' <eos> <cls>',self.tokenizer)
+                inp = self.ques[item] + exp
+                last = len(inp)-1
+                required = self.block_size - len(inp)
+                inp += convert_to_ids(['<pad>']*required, self.tokenizer)
+                labels = [-1]*len(inp)
+                inputs.append(inp)
+                segments.append(self.seg[item])
+                lm_labels.append(labels)
+                mc_last_ids.append(last)
+        return (torch.tensor(inputs), torch.tensor(segments), torch.tensor(lm_labels), torch.tensor(mc_last_ids), torch.tensor(mc_labels))
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     dataset = TextDataset(tokenizer, args, file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
@@ -258,19 +294,23 @@ def train(args, train_dataset, model, tokenizer):
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, (inp,segment,labels) in enumerate(epoch_iterator):
+        for step, (inp,segment,labels, mc_last_ids, mc_labels) in enumerate(epoch_iterator):
             inputs, labels = mask_tokens(inp, tokenizer, args) if args.mlm else (inp, labels)
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             segment = segment.to(args.device)
+            mc_last_ids = mc_last_ids.to(args.device)
+            mc_labels = mc_labels.to(args.device)
             model.train()
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids = inputs, token_type_ids = segment, labels=labels)
-            loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
+            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids = inputs, token_type_ids = segment, lm_labels=labels, mc_token_ids = mc_last_ids, mc_labels=mc_labels)
+            lm_loss, mc_loss= outputs[0], outputs[1]  # model outputs are always tuple in transformers (see doc)
             if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel training
+                lm_loss = lm_loss.mean()  # mean() to average on multi-gpu parallel training
+                mc_loss = mc_loss.mean()
             if args.gradient_accumulation_steps > 1:
-                loss = loss / args.gradient_accumulation_steps
-
+                lm_loss = lm_loss / args.gradient_accumulation_steps
+                mc_loss = mc_loss / args.gradient_accumulation_steps
+            loss = 2 * lm_loss + mc_loss
             if args.fp16:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
@@ -347,26 +387,32 @@ def evaluate(args, model, tokenizer, prefix=""):
     logger.info("  Num examples = %d", len(eval_dataset))
     logger.info("  Batch size = %d", args.eval_batch_size)
     eval_loss = 0.0
+    eval_mc_loss = 0.0
     nb_eval_steps = 0
     model.eval()
 
-    for (inp,segment,labels) in tqdm(eval_dataloader, desc="Evaluating"):
+    for (inp,segment,labels,mc_last,mc_labels) in tqdm(eval_dataloader, desc="Evaluating"):
         inputs, labels = mask_tokens(inp, tokenizer, args) if args.mlm else (inp, labels)
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
         segment = segment.to(args.device)
-
+        mc_last = mc_last.to(args.device)
+        mc_labels = mc_labels.to(args.device)
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids=inputs, labels=labels, token_type_ids = segment)
+            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(input_ids=inputs, lm_labels=labels, token_type_ids = segment, mc_token_ids=mc_last,mc_labels=mc_labels)
             lm_loss = outputs[0]
+            mc_loss = outputs[1] 
             eval_loss += lm_loss.mean().item()
+            eval_mc_loss += mc_loss.mean().item()
         nb_eval_steps += 1
 
     eval_loss = eval_loss / nb_eval_steps
+    mc_loss = eval_mc_loss / nb_eval_steps
     perplexity = torch.exp(torch.tensor(eval_loss))
 
     result = {
-        "perplexity": perplexity
+        "perplexity": perplexity,
+        "mc_loss": mc_loss,    
     }
 
     output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
@@ -500,7 +546,7 @@ def main():
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        args.n_gpu = torch.cuda.device_count()
+        args.n_gpu = 1#torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
@@ -529,7 +575,7 @@ def main():
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)
     special_tokens = {'bos_token':'<bos>','eos_token':'<eos>', 'pad_token': '<pad>', 
-                      'additional_special_tokens':('<ques>','<ans>','<exp>') }
+                      'additional_special_tokens':('<ques>','<ans>','<exp>') , 'cls_token':'<cls>'}
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
     args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
