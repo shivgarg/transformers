@@ -117,7 +117,7 @@ class TextDataset(Dataset):
                     exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
                     exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                     labels.extend([-1]*len(exp_token))
-                    labels.extend(exp)         
+                    labels.extend(exp[:-1]+[-1])         
                     inp = ques + answers + exp_token + exp
                     self.ques.append(ques+answers+exp_token)
                     segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
