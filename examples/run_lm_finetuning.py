@@ -82,25 +82,25 @@ class TextDataset(Dataset):
         self.mc_token_ids = []
         self.mc_labels = []
         directory, filename = os.path.split(file_path)
-        cached_features_file = os.path.join(directory, args.model_name_or_path + '_cached_lm_' + str(block_size) + '_' + filename)
+        cached_features_file = os.path.join(directory, args.model_name_or_path + '_cached_lm_options_cose' + str(block_size) + '_' + filename)
 
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
-                (self.inp, self.seg, self.labels, self.mc_token_ids, self.mc_labels) = pickle.load(handle)
+                (self.inp, self.seg, self.lm_labels, self.mc_token_ids, self.mc_labels) = pickle.load(handle)
         else:
             logger.info("Creating features from dataset file at %s", directory)
 
             with open(file_path, encoding="utf-8") as f:
                 for text in f.readlines():
                     questions = []
-                    segment = []
+                    segments = []
                     lm_labels_list = []
                     mc_token_ids = []
                     example = json.loads(text)
                     ques = tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
                     ques_seg = ['<ques>']*len(ques)
-                    lm_labels.extend([-1]*len(ques))
+                    lm_labels = [-1]*len(ques)
                     for idx,ans in enumerate(example['question']['choices']):
                       answers= "answer: {} .".format(ans['text'])
                       answers = tokenize_sentence(answers, tokenizer)
@@ -121,8 +121,13 @@ class TextDataset(Dataset):
                       segment += convert_to_ids(['<exp>']*required, tokenizer)
                       labels += [-1]*required                
                       questions.append(inp[:block_size])
-                      segment.append(segment[:block_size])
-                      labels.append(labels[:block_size])
+                      segments.append(segment[:block_size])
+                      lm_labels_list.append(labels[:block_size])
+                    self.inp.append(questions)
+                    self.seg.append(segments)
+                    self.lm_labels.append(lm_labels_list)
+                    self.mc_token_ids.append(mc_token_ids)
+                    self.mc_labels.append(ord(example['answerKey'])-ord('A'))
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text))
                     #self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
             # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
@@ -131,35 +136,18 @@ class TextDataset(Dataset):
 
             logger.info("Saving features into cached file %s", cached_features_file)
             with open(cached_features_file, 'wb') as handle:
-                pickle.dump((self.inp, self.seg, self.labels, self.ques, self.mc_last, self.explanations), handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump((self.inp, self.seg, self.lm_labels, self.mc_token_ids, self.mc_labels), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return len(self.inp)
 
     def __getitem__(self, item):
-        inputs = []
-        segments = []
-        lm_labels = []
-        mc_last_ids = []
-        mc_labels = []
-        adv_cose = np.random.choice(list(range(item))+list(range(item+1,len(self.inp))),self.num_adv)
-        inputs.append(self.inp[item])
-        segments.append(self.seg[item])
-        lm_labels.append(self.labels[item])
-        mc_last_ids.append(self.mc_last[item])
-        mc_labels.append(0)
-        for i in range(self.num_adv):
-                exp = tokenize_sentence(self.explanations[adv_cose[i]] + ' <eos> <cls>',self.tokenizer)
-                inp = self.ques[item] + exp
-                last = len(inp)-1
-                required = self.block_size - len(inp)
-                inp += convert_to_ids(['<pad>']*required, self.tokenizer)
-                labels = [-1]*len(inp)
-                inputs.append(inp)
-                segments.append(self.seg[item])
-                lm_labels.append(labels)
-                mc_last_ids.append(last)
-        return (torch.tensor(inputs), torch.tensor(segments), torch.tensor(lm_labels), torch.tensor(mc_last_ids), torch.tensor(mc_labels))
+        inputs = torch.tensor(self.inp[item])
+        segments = torch.tensor(self.seg[item])
+        lm_labels = torch.tensor(self.lm_labels[item])
+        mc_last_ids = torch.tensor(self.mc_token_ids[item])
+        mc_labels = torch.tensor(self.mc_labels[item])
+        return (inputs, segments, lm_labels, mc_last_ids, mc_labels)
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     dataset = TextDataset(tokenizer, args, file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
