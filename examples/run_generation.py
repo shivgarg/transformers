@@ -29,7 +29,7 @@ import numpy as np
 from transformers import GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
+from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, OpenAIGPTDoubleHeadsModel
 from transformers import XLNetLMHeadModel, XLNetTokenizer
 from transformers import TransfoXLLMHeadModel, TransfoXLTokenizer
 from transformers import CTRLLMHeadModel, CTRLTokenizer
@@ -48,7 +48,7 @@ ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (
 MODEL_CLASSES = {
     'gpt2': (GPT2LMHeadModel, GPT2Tokenizer),
     'ctrl': (CTRLLMHeadModel, CTRLTokenizer),
-    'openai-gpt': (OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
+    'openai-gpt': (OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer),
     'xlnet': (XLNetLMHeadModel, XLNetTokenizer),
     'transfo-xl': (TransfoXLLMHeadModel, TransfoXLTokenizer),
     'xlm': (XLMWithLMHeadModel, XLMTokenizer),
@@ -237,6 +237,7 @@ def main():
             xlm_mask_token = None
 	
         questions = open(args.ques_file).readlines()
+        output_file = open(args.output_file,'w')
         for raw_text in questions:
           example = json.loads(raw_text)
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
@@ -246,7 +247,7 @@ def main():
             answers += ans['text'] +" , "
           answers = tokenize_sentence(answers, tokenizer)
           answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['. commonsense says '],tokenizer)
+          exp_token = tokenize_sentence('. commonsense says ',tokenizer)
           exp_seg = ['<exp>']*(len(exp_token))
           inp = ques + answers + exp_token
           segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -274,17 +275,18 @@ def main():
             device=args.device,
             tokenizer=tokenizer,
           )
-          out = out[:, :].tolist()
+          out = out[:, len(inp):].tolist()
           for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-            print(text)
-
+            example['question']['cose'] = text
+            output_file.write(json.dumps(example)+'\n')
+            output_file.flush()
           if args.prompt:
             break
+        output_file.close()
     return text
 
-
+	
 if __name__ == '__main__':
     main()
