@@ -107,7 +107,7 @@ class TextDataset(Dataset):
                       answers_seg = ['<ans>']*len(answers)
                       labels = lm_labels + [-1]*(len(answers))
                       exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
-                      exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
+                      exp = tokenize_sentence( "{}. {}. {}. <eos> <cls>".format(example['fact1'],example['fact2'],example['combinedfact']),tokenizer)
                       exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                       labels.extend([-1]*len(exp_token))
                       labels.extend(exp[:-1]+[-1])         
@@ -122,7 +122,10 @@ class TextDataset(Dataset):
                       labels += [-1]*required                
                       questions.append(inp[:block_size])
                       segments.append(segment[:block_size])
-                      lm_labels_list.append(labels[:block_size])
+                      if idx == ord(example['answerKey']) - ord('A'):
+                        lm_labels_list.append(labels[:block_size])
+                      else:
+                        lm_labels_list.append([-1]*block_size)
                     self.inp.append(questions)
                     self.seg.append(segments)
                     self.lm_labels.append(lm_labels_list)
