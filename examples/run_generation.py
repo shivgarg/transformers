@@ -215,8 +215,9 @@ def main():
     if args.model_type in ["ctrl"]:
         if args.temperature > 0.7:
             logger.info('CTRL typically works better with lower temperatures (and lower top_k).')
-
-    while True:
+    run = True
+    while run:
+        run = False
         xlm_lang = None
         # XLM Language usage detailed in the issues #1414
         if args.model_type in ["xlm"] and hasattr(tokenizer, 'lang2id') and hasattr(model.config, 'use_lang_emb') \
@@ -238,7 +239,8 @@ def main():
 	
         questions = open(args.ques_file).readlines()
         output_file = open(args.output_file,'w')
-        for raw_text in questions:
+        for i,raw_text in enumerate(questions):
+          print(i)
           example = json.loads(raw_text)
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
