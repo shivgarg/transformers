@@ -74,7 +74,7 @@ def convert_to_ids(tokens,tokenizer):
 
 
 class TextDataset(Dataset):
-    def __init__(self, tokenizer, args, file_path='train', block_size=512, num_adv=4):
+    def __init__(self, tokenizer, args, file_path='train', block_size=512, num_adv=10):
         assert os.path.isfile(file_path)
         self.inp = []
         self.seg = []
@@ -108,12 +108,13 @@ class TextDataset(Dataset):
                     ques_seg = ['<ques>']*len(ques)
                     labels.extend([-1]*len(ques))
                     answers = "answers: "
-                    for ans in example['question']['choices']:
-                      answers+= ans['text'] + " , "
+                    for i,ans in enumerate(example['question']['choices']):
+                      answers+= " ({}) ".format(chr(i+ord('A'))) + ans['text']
+                    answers += "."
                     answers = tokenize_sentence(answers, tokenizer)
                     answers_seg = ['<ans>']*len(answers)
                     labels.extend([-1]*(len(answers)))
-                    exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
+                    exp_token = tokenize_sentence('Commonsense says ',tokenizer) 
                     exp = tokenize_sentence(example['question']['cose'] + ' <eos> <cls>',tokenizer)
                     exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                     labels.extend([-1]*len(exp_token))
