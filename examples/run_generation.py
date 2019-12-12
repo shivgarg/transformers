@@ -184,7 +184,7 @@ def main():
                         help="Avoid using CUDA when available")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--stop_token', type=str, default=None,
+    parser.add_argument('--stop_token', type=str, default='<eos>',
                         help="Token at which text generation is stopped")
     parser.add_argument('--ques_file', type=str, default=None,
 			help="CQA questions file in json format")
@@ -199,7 +199,7 @@ def main():
 
     args.model_type = args.model_type.lower()
     model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
-    tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
+    tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, do_lower_case=True)
     model = model_class.from_pretrained(args.model_name_or_path)
     model.to(args.device)
     model.eval()
@@ -215,8 +215,9 @@ def main():
     if args.model_type in ["ctrl"]:
         if args.temperature > 0.7:
             logger.info('CTRL typically works better with lower temperatures (and lower top_k).')
-
-    while True:
+    run = True
+    while run:
+        run = False
         xlm_lang = None
         # XLM Language usage detailed in the issues #1414
         if args.model_type in ["xlm"] and hasattr(tokenizer, 'lang2id') and hasattr(model.config, 'use_lang_emb') \
@@ -237,15 +238,18 @@ def main():
             xlm_mask_token = None
 	
         questions = open(args.ques_file).readlines()
+        outfile = open(args.output_file,'w')
         for raw_text in questions:
           example = json.loads(raw_text)
-          ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+          ques = tokenize_sentence("<bos> "+example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          answers = convert_to_ids(['<ans>'],tokenizer)
-          for ans in example['question']['choices']:
-            answers.extend(tokenize_sentence(ans['text'], tokenizer))
+          answers = "answers: "
+          for i,ans in enumerate(example['question']['choices']):
+            answers += " ({}) ".format(chr(i+ord('A'))) + ans['text']
+          answers += "."
+          answers = tokenize_sentence(answers, tokenizer)
           answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['<exp>'],tokenizer)
+          exp_token = tokenize_sentence("Commonsense says ",tokenizer)
           exp_seg = ['<exp>']*(len(exp_token))
           inp = ques + answers + exp_token
           segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -273,16 +277,14 @@ def main():
             device=args.device,
             tokenizer=tokenizer,
           )
-          out = out[:, :].tolist()
+          out = out[:, len(inp):].tolist()
           for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-            print(text)
-
-          if args.prompt:
-            break
-    return text
+            example['question']['cose']=text
+            outfile.write(json.dumps(example)+'\n')
+            outfile.flush()
+        outfile.close()
 
 
 if __name__ == '__main__':
