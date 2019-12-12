@@ -123,7 +123,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
     segment = segment.unsqueeze(0).repeat(num_samples, 1)
  
     with torch.no_grad():
-        for _ in trange(length):
+        for _ in range(length):
 
             inputs = {'input_ids': generated, 'token_type_ids':segment}
             if is_xlnet: 
@@ -172,7 +172,7 @@ def main():
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--padding_text", type=str, default="")
     parser.add_argument("--xlm_lang", type=str, default="", help="Optional language when used with the XLM model.")
-    parser.add_argument("--length", type=int, default=20)
+    parser.add_argument("--length", type=int, default=50)
     parser.add_argument("--num_samples", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="temperature of 0 implies greedy sampling")
@@ -184,7 +184,7 @@ def main():
                         help="Avoid using CUDA when available")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--stop_token', type=str, default=None,
+    parser.add_argument('--stop_token', type=str, default="<eos>",
                         help="Token at which text generation is stopped")
     parser.add_argument('--ques_file', type=str, default=None,
 			help="CQA questions file in json format")
@@ -215,8 +215,9 @@ def main():
     if args.model_type in ["ctrl"]:
         if args.temperature > 0.7:
             logger.info('CTRL typically works better with lower temperatures (and lower top_k).')
-
-    while True:
+    run = True
+    while run:
+        run = False
         xlm_lang = None
         # XLM Language usage detailed in the issues #1414
         if args.model_type in ["xlm"] and hasattr(tokenizer, 'lang2id') and hasattr(model.config, 'use_lang_emb') \
@@ -237,15 +238,19 @@ def main():
             xlm_mask_token = None
 	
         questions = open(args.ques_file).readlines()
-        for raw_text in questions:
+        outfile = open(args.output_file,'w')
+        for idx,raw_text in enumerate(questions):
+          print("{}/{}".format(idx,len(questions)))
           example = json.loads(raw_text)
-          ques = convert_to_ids(['<bos>', '<ques>'],tokenizer) + tokenize_sentence(example['question']['stem'], tokenizer)
+          ques = tokenize_sentence("<bos> "+example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          answers = convert_to_ids(['<ans>'],tokenizer)
-          for ans in example['question']['choices']:
-            answers.extend(tokenize_sentence(ans['text'], tokenizer))
+          answers = "answers: "
+          for i,ans in enumerate(example['question']['choices']):
+            answers += " ({}) ".format(chr(i+ord('A'))) + ans['text']
+          answers += "."
+          answers = tokenize_sentence(answers, tokenizer)
           answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['<exp>'],tokenizer)
+          exp_token = tokenize_sentence('Commonsense says ',tokenizer)
           exp_seg = ['<exp>']*(len(exp_token))
           inp = ques + answers + exp_token
           segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -273,16 +278,14 @@ def main():
             device=args.device,
             tokenizer=tokenizer,
           )
-          out = out[:, :].tolist()
+          out = out[:, len(inp):].tolist()
           for o in out:
             text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-            print(text)
-
-          if args.prompt:
-            break
-    return text
+            example['question']['cose'] = text
+            outfile.write(json.dumps(example)+'\n')
+            outfile.flush()
+        outfile.close()  
 
 
 if __name__ == '__main__':
