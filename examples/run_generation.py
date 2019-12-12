@@ -240,16 +240,16 @@ def main():
         questions = open(args.ques_file).readlines()
         output_file = open(args.output_file,'w')
         for i,raw_text in enumerate(questions):
-          print(i)
           example = json.loads(raw_text)
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
           answers = "answers: "
-          for ans in example['question']['choices']:
-            answers += ans['text'] +" , "
+          for i,ans in enumerate(example['question']['choices']):
+            answers += " ({}) ".format(chr(i+ord('A'))) + ans['text']
+          answers += "."
           answers = tokenize_sentence(answers, tokenizer)
           answers_seg = ['<ans>']*len(answers)
-          exp_token = tokenize_sentence('. commonsense says ',tokenizer)
+          exp_token = tokenize_sentence('Commonsense says ',tokenizer)
           exp_seg = ['<exp>']*(len(exp_token))
           inp = ques + answers + exp_token
           segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -287,7 +287,6 @@ def main():
           if args.prompt:
             break
         output_file.close()
-    return text
 
 	
 if __name__ == '__main__':
