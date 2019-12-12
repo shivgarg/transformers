@@ -241,48 +241,55 @@ def main():
           example = json.loads(raw_text)
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          answers = "answers: "
+          explanantions = []
           for ans in example['question']['choices']:
-            answers += ans['text'] +" , "
-          answers = tokenize_sentence(answers, tokenizer)
-          answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['. commonsense says '],tokenizer)
-          exp_seg = ['<exp>']*(len(exp_token))
-          inp = ques + answers + exp_token
-          segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
-          assert len(inp) == len(segment)
-          if args.model_type in ["transfo-xl", "xlnet"]:
+            answers = "answer: {} .".format(ans['text'])
+            answers = tokenize_sentence(answers, tokenizer)
+            answers_seg = ['<ans>']*len(answers)
+            exp_token = convert_to_ids(['. commonsense says '],tokenizer)
+            exp_seg = ['<exp>']*(len(exp_token))
+            inp = ques + answers + exp_token
+            segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
+            assert len(inp) == len(segment)
+            if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
-            text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
-          context_tokens = (inp, segment)
-          if args.model_type == "ctrl":
-            if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
-              logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
-          out = sample_sequence(
-            model=model,
-            context=context_tokens,
-            num_samples=args.num_samples,
-            length=args.length,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            repetition_penalty=args.repetition_penalty,
-            is_xlnet=bool(args.model_type == "xlnet"),
-            is_xlm_mlm=is_xlm_mlm,
-            xlm_mask_token=xlm_mask_token,
-            xlm_lang=xlm_lang,
-            device=args.device,
-            tokenizer=tokenizer,
-          )
-          out = out[:, :].tolist()
-          for o in out:
-            text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
-            text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-            print(text)
-
-          if args.prompt:
-            break
+              text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
+            context_tokens = (inp, segment)
+            if args.model_type == "ctrl":
+              if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
+                logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
+            out = sample_sequence(
+              model=model,
+              context=context_tokens,
+              num_samples=args.num_samples,
+              length=args.length,
+              temperature=args.temperature,
+              top_k=args.top_k,
+              top_p=args.top_p,
+              repetition_penalty=args.repetition_penalty,
+              is_xlnet=bool(args.model_type == "xlnet"),
+              is_xlm_mlm=is_xlm_mlm,
+              xlm_mask_token=xlm_mask_token,
+              xlm_lang=xlm_lang,
+              device=args.device,
+              tokenizer=tokenizer,
+            )
+            out = out[:, :].tolist()
+            for o in out:
+              text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
+              text = text[: text.find(args.stop_token) if args.stop_token else None]
+	      explanations.append(text)
+	  query = []
+          segments = []
+          for ans,explanation in zip(example['question']['choices'], explanations):
+            answers = tokenize_sentence("answer: {} .".format(ans['text']),tokenizer)
+            answers_seg = ['<ans>']*len(answers)
+            exp = tokenize_sentence(". commonsense says {} <eos> <cls>".format(explanation),tokenizer)
+            exp_seg = ['<exp>']*len(exp)
+            query.append("<bos> {} answer: {} .. commonsense says {} <eos> <cls>".format(example['question']['stem'], ans, explanation))
+          inputs_ids = torch.tensor([tokenizer.encode(s) for s in query]).unsqueeze(0)
+          mc_token_ids = torch.tensor([inp.size(-1)-1 for inp in inputs_ids]).unsqueeze(0)
+           
     return text
 
 
