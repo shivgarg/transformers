@@ -96,7 +96,7 @@ class TextDataset(Dataset):
                     labels.extend([-1]*len(ques))
                     answers = "answers: "
                     for i,ans in enumerate(example['question']['choices']):
-                      answers+= "({}) ".format(chr(i+ord('A'))) +  ans['text']
+                      answers+= " ({}) ".format(chr(i+ord('A'))) +  ans['text']
                     answers += "." 
                     answers = tokenize_sentence(answers, tokenizer)
                     answers_seg = ['<ans>']*len(answers)
