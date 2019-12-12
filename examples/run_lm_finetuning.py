@@ -96,11 +96,12 @@ class TextDataset(Dataset):
                     labels.extend([-1]*len(ques))
                     answers = "answers: "
                     for i, ans in enumerate(example['question']['choices']):
-                      answers+= "({}) ".format(chr(i+65))+ans['text'] + " "
+                      answers+= " ({}) ".format(chr(i+ord('A')))+ans['text']
+                    answers += "."
                     answers = tokenize_sentence(answers, tokenizer)
                     answers_seg = ['<ans>']*len(answers)
                     labels.extend([-1]*(len(answers)))
-                    exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
+                    exp_token = tokenize_sentence('Commonsense says ',tokenizer) 
                     exp = tokenize_sentence(example['fact1'] + " " + example['fact2'] + " " + example['combinedfact'] +  ' <eos>',tokenizer)
                     exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                     labels.extend([-1]*len(exp_token))
@@ -111,7 +112,7 @@ class TextDataset(Dataset):
                     assert len(labels) == len(segment)
                     required = block_size - len(inp)
                     inp += convert_to_ids(['<pad>']*required, tokenizer)
-                    segment += convert_to_ids(['<pad>']*required, tokenizer)
+                    segment += convert_to_ids(['<exp>']*required, tokenizer)
                     labels += [-1]*required                
                     assert len(inp) == len(labels)
                     assert len(labels) == len(segment)
