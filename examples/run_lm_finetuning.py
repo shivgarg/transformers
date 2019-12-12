@@ -106,7 +106,7 @@ class TextDataset(Dataset):
                       answers = tokenize_sentence(answers, tokenizer)
                       answers_seg = ['<ans>']*len(answers)
                       labels = lm_labels + [-1]*(len(answers))
-                      exp_token = convert_to_ids(['. commonsense says '],tokenizer) 
+                      exp_token = tokenize_sentence('Commonsense says ',tokenizer) 
                       exp = tokenize_sentence( "{}. {}. {}. <eos> <cls>".format(example['fact1'],example['fact2'],example['combinedfact']),tokenizer)
                       exp_seg = ['<exp>']*(len(exp)+len(exp_token))
                       labels.extend([-1]*len(exp_token))
