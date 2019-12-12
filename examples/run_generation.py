@@ -28,8 +28,8 @@ import numpy as np
 
 from transformers import GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig
 
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2DoubleHeadsModel
+from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, OpenAIGPTDoubleHeadsModel
 from transformers import XLNetLMHeadModel, XLNetTokenizer
 from transformers import TransfoXLLMHeadModel, TransfoXLTokenizer
 from transformers import CTRLLMHeadModel, CTRLTokenizer
@@ -48,7 +48,7 @@ ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (
 MODEL_CLASSES = {
     'gpt2': (GPT2LMHeadModel, GPT2Tokenizer),
     'ctrl': (CTRLLMHeadModel, CTRLTokenizer),
-    'openai-gpt': (OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
+    'openai-gpt': (OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer),
     'xlnet': (XLNetLMHeadModel, XLNetTokenizer),
     'transfo-xl': (TransfoXLLMHeadModel, TransfoXLTokenizer),
     'xlm': (XLMWithLMHeadModel, XLMTokenizer),
@@ -172,7 +172,7 @@ def main():
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--padding_text", type=str, default="")
     parser.add_argument("--xlm_lang", type=str, default="", help="Optional language when used with the XLM model.")
-    parser.add_argument("--length", type=int, default=20)
+    parser.add_argument("--length", type=int, default=50)
     parser.add_argument("--num_samples", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="temperature of 0 implies greedy sampling")
@@ -239,14 +239,16 @@ def main():
         questions = open(args.ques_file).readlines()
         for raw_text in questions:
           example = json.loads(raw_text)
+          print(example['question']['stem'])
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          explanantions = []
+          explanations = []
           for ans in example['question']['choices']:
             answers = "answer: {} .".format(ans['text'])
+            print(ans['text'])
             answers = tokenize_sentence(answers, tokenizer)
             answers_seg = ['<ans>']*len(answers)
-            exp_token = convert_to_ids(['. commonsense says '],tokenizer)
+            exp_token = convert_to_ids(['Commonsense says '],tokenizer)
             exp_seg = ['<exp>']*(len(exp_token))
             inp = ques + answers + exp_token
             segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -274,23 +276,36 @@ def main():
               device=args.device,
               tokenizer=tokenizer,
             )
-            out = out[:, :].tolist()
+            out = out[:, len(inp):].tolist()
             for o in out:
               text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
               text = text[: text.find(args.stop_token) if args.stop_token else None]
-	      explanations.append(text)
-	  query = []
+              explanations.append(text)
+              print(text)
+          inp = []
           segments = []
+          mc_token_ids = []
+          inp_len = 192
           for ans,explanation in zip(example['question']['choices'], explanations):
             answers = tokenize_sentence("answer: {} .".format(ans['text']),tokenizer)
             answers_seg = ['<ans>']*len(answers)
-            exp = tokenize_sentence(". commonsense says {} <eos> <cls>".format(explanation),tokenizer)
+            exp = tokenize_sentence("Commonsense says {} <eos> <cls>".format(explanation),tokenizer)
             exp_seg = ['<exp>']*len(exp)
-            query.append("<bos> {} answer: {} .. commonsense says {} <eos> <cls>".format(example['question']['stem'], ans, explanation))
-          inputs_ids = torch.tensor([tokenizer.encode(s) for s in query]).unsqueeze(0)
-          mc_token_ids = torch.tensor([inp.size(-1)-1 for inp in inputs_ids]).unsqueeze(0)
+            combined = ques + answers + exp
+            combined_seg = convert_to_ids(ques_seg + answers_seg + exp_seg,tokenizer)
+            assert len(combined) == len(combined_seg)
+            mc_token_ids.append(len(combined)-1)
+            required = inp_len - len(combined)
+            combined.extend(convert_to_ids(['<pad>']*required, tokenizer))
+            combined_seg.extend(convert_to_ids(['<exp>']*required, tokenizer))
+            inp.append(combined)
+            segments.append(combined_seg)
+          inputs_ids = torch.tensor(inp).unsqueeze(0).cuda()
+          segment_ids = torch.tensor(segments).unsqueeze(0).cuda()
+          mc_token_ids = torch.tensor(mc_token_ids).unsqueeze(0).cuda()
+          _, scores = model(inputs_ids, mc_token_ids = mc_token_ids, token_type_ids = segment_ids)
+          print(scores) 
            
-    return text
 
 
 if __name__ == '__main__':
