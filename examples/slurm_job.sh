@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH -J gpt2_cose_multi_options             # Job name
-#SBATCH -o /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt2-cose-multi_options.out       # Specify stdout output file (%j expands to jobId)
-#SBATCH -e /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt2-cose-multi_options.err       # stderr; skip to combine stdout and stderr
+#SBATCH -J gpt_cose_multi_options_valid             # Job name
+#SBATCH -o /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt-cose-multi_options_valid.out       # Specify stdout output file (%j expands to jobId)
+#SBATCH -e /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt-cose-multi_options_valid.err       # stderr; skip to combine stdout and stderr
 #SBATCH -p gtx                   # Queue name
 #SBATCH -N 1                     # Total number of nodes requested (16 cores/node)
 #SBATCH -n 1                     # Total number of tasks
@@ -21,4 +21,4 @@ module load cuda cudnn
 
 # Launch the executable named "a.out"
 source /work/07010/sgarg/maverick2/venv/bin/activate
-sh run.sh $1 $2
+sh run_gen.sh $1 $2 $3 $4

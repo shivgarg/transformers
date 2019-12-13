@@ -123,7 +123,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
     segment = segment.unsqueeze(0).repeat(num_samples, 1)
  
     with torch.no_grad():
-        for _ in trange(length):
+        for _ in range(length):
 
             inputs = {'input_ids': generated, 'token_type_ids':segment}
             if is_xlnet: 
@@ -237,18 +237,17 @@ def main():
             xlm_mask_token = None
 	
         questions = open(args.ques_file).readlines()
+        outfile = open(args.output_file,'w')
         for raw_text in questions:
           example = json.loads(raw_text)
-          print(example['question']['stem'])
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
           explanations = []
           for ans in example['question']['choices']:
             answers = "answer: {} .".format(ans['text'])
-            print(ans['text'])
             answers = tokenize_sentence(answers, tokenizer)
             answers_seg = ['<ans>']*len(answers)
-            exp_token = convert_to_ids(['Commonsense says '],tokenizer)
+            exp_token = tokenize_sentence('Commonsense says ',tokenizer)
             exp_seg = ['<exp>']*(len(exp_token))
             inp = ques + answers + exp_token
             segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
@@ -281,7 +280,6 @@ def main():
               text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
               text = text[: text.find(args.stop_token) if args.stop_token else None]
               explanations.append(text)
-              print(text)
           inp = []
           segments = []
           mc_token_ids = []
@@ -304,7 +302,12 @@ def main():
           segment_ids = torch.tensor(segments).unsqueeze(0).cuda()
           mc_token_ids = torch.tensor(mc_token_ids).unsqueeze(0).cuda()
           _, scores = model(inputs_ids, mc_token_ids = mc_token_ids, token_type_ids = segment_ids)
-          print(scores) 
+          best_exp = torch.argmax(scores).item()
+          example['question']['cose']=explanations[best_exp]
+          outfile.write(json.dumps(example)+'\n')
+          outfile.flush()
+        outfile.close()
+    
            
 
 
