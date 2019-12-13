@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH -J gpt2_qasc_lm_valid         # Job name
-#SBATCH -o /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt2-qasc-lm_valid.out       # Specify stdout output file (%j expands to jobId)
+#SBATCH -J gpt_qasc_options_train         # Job name
+#SBATCH -o /work/07010/sgarg/maverick2/nlp_project/transformers/examples/training_logs/gpt-qasc-options_train.out       # Specify stdout output file (%j expands to jobId)
 #SBATCH -p gtx                   # Queue name
 #SBATCH -N 1                     # Total number of nodes requested (16 cores/node)
 #SBATCH -n 1                     # Total number of tasks

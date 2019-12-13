@@ -28,8 +28,8 @@ import numpy as np
 
 from transformers import GPT2Config, OpenAIGPTConfig, XLNetConfig, TransfoXLConfig, XLMConfig, CTRLConfig
 
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2DoubleHeadsModel
+from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, OpenAIGPTDoubleHeadsModel
 from transformers import XLNetLMHeadModel, XLNetTokenizer
 from transformers import TransfoXLLMHeadModel, TransfoXLTokenizer
 from transformers import CTRLLMHeadModel, CTRLTokenizer
@@ -48,7 +48,7 @@ ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (
 MODEL_CLASSES = {
     'gpt2': (GPT2LMHeadModel, GPT2Tokenizer),
     'ctrl': (CTRLLMHeadModel, CTRLTokenizer),
-    'openai-gpt': (OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
+    'openai-gpt': (OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer),
     'xlnet': (XLNetLMHeadModel, XLNetTokenizer),
     'transfo-xl': (TransfoXLLMHeadModel, TransfoXLTokenizer),
     'xlm': (XLMWithLMHeadModel, XLMTokenizer),
@@ -123,7 +123,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
     segment = segment.unsqueeze(0).repeat(num_samples, 1)
  
     with torch.no_grad():
-        for _ in trange(length):
+        for _ in range(length):
 
             inputs = {'input_ids': generated, 'token_type_ids':segment}
             if is_xlnet: 
@@ -172,7 +172,7 @@ def main():
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--padding_text", type=str, default="")
     parser.add_argument("--xlm_lang", type=str, default="", help="Optional language when used with the XLM model.")
-    parser.add_argument("--length", type=int, default=20)
+    parser.add_argument("--length", type=int, default=50)
     parser.add_argument("--num_samples", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="temperature of 0 implies greedy sampling")
@@ -215,8 +215,9 @@ def main():
     if args.model_type in ["ctrl"]:
         if args.temperature > 0.7:
             logger.info('CTRL typically works better with lower temperatures (and lower top_k).')
-
-    while True:
+    run = True
+    while run:
+        run = False
         xlm_lang = None
         # XLM Language usage detailed in the issues #1414
         if args.model_type in ["xlm"] and hasattr(tokenizer, 'lang2id') and hasattr(model.config, 'use_lang_emb') \
@@ -237,53 +238,78 @@ def main():
             xlm_mask_token = None
 	
         questions = open(args.ques_file).readlines()
+        outfile = open(args.output_file,'w')
         for raw_text in questions:
           example = json.loads(raw_text)
           ques =  tokenize_sentence("<bos> "+ example['question']['stem'], tokenizer)
           ques_seg = ['<ques>']*len(ques)
-          answers = "answers: "
+          explanations = []
           for ans in example['question']['choices']:
-            answers += ans['text'] +" , "
-          answers = tokenize_sentence(answers, tokenizer)
-          answers_seg = ['<ans>']*len(answers)
-          exp_token = convert_to_ids(['. commonsense says '],tokenizer)
-          exp_seg = ['<exp>']*(len(exp_token))
-          inp = ques + answers + exp_token
-          segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
-          assert len(inp) == len(segment)
-          if args.model_type in ["transfo-xl", "xlnet"]:
+            answers = "answer: {} .".format(ans['text'])
+            answers = tokenize_sentence(answers, tokenizer)
+            answers_seg = ['<ans>']*len(answers)
+            exp_token = tokenize_sentence('Commonsense says ',tokenizer)
+            exp_seg = ['<exp>']*(len(exp_token))
+            inp = ques + answers + exp_token
+            segment = convert_to_ids(ques_seg + answers_seg + exp_seg, tokenizer)
+            assert len(inp) == len(segment)
+            if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
-            text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
-          context_tokens = (inp, segment)
-          if args.model_type == "ctrl":
-            if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
-              logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
-          out = sample_sequence(
-            model=model,
-            context=context_tokens,
-            num_samples=args.num_samples,
-            length=args.length,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            repetition_penalty=args.repetition_penalty,
-            is_xlnet=bool(args.model_type == "xlnet"),
-            is_xlm_mlm=is_xlm_mlm,
-            xlm_mask_token=xlm_mask_token,
-            xlm_lang=xlm_lang,
-            device=args.device,
-            tokenizer=tokenizer,
-          )
-          out = out[:, :].tolist()
-          for o in out:
-            text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
-            text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-            print(text)
-
-          if args.prompt:
-            break
-    return text
+              text = (args.padding_text if args.padding_text else PADDING_TEXT) + text
+            context_tokens = (inp, segment)
+            if args.model_type == "ctrl":
+              if not any(context_tokens[0] == x for x in tokenizer.control_codes.values()):
+                logger.info("WARNING! You are not starting your generation from a control code so you won't get good results")
+            out = sample_sequence(
+              model=model,
+              context=context_tokens,
+              num_samples=args.num_samples,
+              length=args.length,
+              temperature=args.temperature,
+              top_k=args.top_k,
+              top_p=args.top_p,
+              repetition_penalty=args.repetition_penalty,
+              is_xlnet=bool(args.model_type == "xlnet"),
+              is_xlm_mlm=is_xlm_mlm,
+              xlm_mask_token=xlm_mask_token,
+              xlm_lang=xlm_lang,
+              device=args.device,
+              tokenizer=tokenizer,
+            )
+            out = out[:, len(inp):].tolist()
+            for o in out:
+              text = tokenizer.decode(o, clean_up_tokenization_spaces=True)
+              text = text[: text.find(args.stop_token) if args.stop_token else None]
+              explanations.append(text)
+          inp = []
+          segments = []
+          mc_token_ids = []
+          inp_len = 192
+          for ans,explanation in zip(example['question']['choices'], explanations):
+            answers = tokenize_sentence("answer: {} .".format(ans['text']),tokenizer)
+            answers_seg = ['<ans>']*len(answers)
+            exp = tokenize_sentence("Commonsense says {} <eos> <cls>".format(explanation),tokenizer)
+            exp_seg = ['<exp>']*len(exp)
+            combined = ques + answers + exp
+            combined_seg = convert_to_ids(ques_seg + answers_seg + exp_seg,tokenizer)
+            assert len(combined) == len(combined_seg)
+            mc_token_ids.append(len(combined)-1)
+            required = inp_len - len(combined)
+            combined.extend(convert_to_ids(['<pad>']*required, tokenizer))
+            combined_seg.extend(convert_to_ids(['<exp>']*required, tokenizer))
+            inp.append(combined)
+            segments.append(combined_seg)
+          inputs_ids = torch.tensor(inp).unsqueeze(0).cuda()
+          segment_ids = torch.tensor(segments).unsqueeze(0).cuda()
+          mc_token_ids = torch.tensor(mc_token_ids).unsqueeze(0).cuda()
+          _, scores = model(inputs_ids, mc_token_ids = mc_token_ids, token_type_ids = segment_ids)
+          best_exp = torch.argmax(scores).item()
+          example['question']['cose']=explanations[best_exp]
+          outfile.write(json.dumps(example)+'\n')
+          outfile.flush()
+        outfile.close()
+    
+           
 
 
 if __name__ == '__main__':
